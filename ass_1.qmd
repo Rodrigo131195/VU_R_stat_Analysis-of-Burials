@@ -1,0 +1,227 @@
+---
+title: "Assignment 1: Analysis of burials from the Corded Ware culture"
+date: "26 April 2024"
+author: "Rodrigo de Jesús Muñoz García"
+format:
+  html:
+    self-contained: true
+execute:
+  echo: true
+  message: false
+  warning: false
+---
+
+## Libraries
+
+```{r}
+library(readxl)
+library(dplyr)
+library(tidyr)
+
+```
+
+## Questions
+
+1.  Load the burial characteristics data from the **All_burials** sheet in an object called `graves`. Also load the grave location data from the **Database_references** sheet in an object called `locations` .
+
+```{r}
+
+graves <- read_excel("data/corded_ware_burials.xlsx", sheet = "All_burials")
+
+locations <- read_excel("data/corded_ware_burials.xlsx", sheet = "Database_references")
+```
+
+2.  Make an R-statement, whose output is a **single** `TRUE` or `FALSE`, that checks whether all graves found in the `All_burials` sheet are present in the `Database_references` sheet and, conversely, that all graves in the **Database_references** sheet are present in the **All_burials** sheet.
+
+```{r}
+
+gra_in_loc <- all(graves$"Grave ID" %in% locations$"Grave ID")
+
+loc_in_gra <- all(locations$"Grave ID" %in% graves$"Grave ID")
+
+
+gra_in_loc && loc_in_gra
+
+```
+
+3.  The columns `Left Flexed`, `Right Flexed`, `Extended`, `Seated` in the table `All_burials` give the orientation of the body. Only one of these can be the body position, which means that the sum of these columns should be 0 (unknown position) or 1. Make an R-statement, whose output is a single `TRUE` or `FALSE`, that checks whether this is indeed the case.
+
+    ```{r}
+
+    body_position <- rowSums(graves[, c("Left Flexed", "Right Flexed", "Extended", "Seated")]) %in% c(0, 1)
+
+    all(body_position)
+    ```
+
+4.  Make the new data frame `artifacts` that contains the four columns listed above. The table should only contain rows where the number of artifacts is not equal to 0. You probably want to use functions from the `dplyr` and `tidyr` packages as demonstrated in the [Data wrangling](https://few.vu.nl/~molenaar/courses/StatR/chapters/B-10-wrangling.html) chapter of the syllabus. *Display the head, the first 6 rows, of your `artifacts` object (no caption needed)*.
+
+    ```{r}
+
+    artifact_cols <- grep("^pos_", names(graves), value = TRUE)
+
+    artifacts <- data.frame()
+
+    for (col in artifact_cols) {
+      # Get type
+      artifact_type <- gsub("^pos_", "", col)
+      artifact_type <- gsub("\\..*", "", artifact_type)
+      
+      # Get pos
+      position <- as.integer(gsub("^.*\\.", "", col))
+      
+      # Filter 0
+      filtered <- graves %>%
+        filter(get(col) != 0) %>%
+        select("Grave ID", !!sym(col))
+      
+      # Name column
+      colnames(filtered)[2] <- "Number"
+      
+      artifacts <- bind_rows(artifacts, mutate(filtered, Artifact = artifact_type, Position = position))
+    }
+
+    # Displaying the head of the artifacts data frame
+    head(artifacts)
+    ```
+
+5.  Add the column `Orientation` to the `location` object as listed above. **Tip:** One way to achieve this is to first create an intermediary `orientation` data frame with columns `Grave ID` and the new `Orientation` column and to subsequently join this with the `location` data frame. Please see the help on the different `join` functions from `dplyr` to choose the right one. *Display the head of the modified `locations` table (no caption needed)*.The `echo: false` option disables the printing of code (only output is displayed).
+
+    ```{r}
+
+    orientation <- transmute(graves, `Grave ID`, Orientation = case_when(
+      graves$"Left Flexed" == 1 ~ "Left Flexed",
+      graves$"Right Flexed" == 1 ~ "Right Flexed",
+      graves$Extended == 1 ~ "Extended",
+      graves$Seated == 1 ~ "Seated",
+      TRUE ~ "Unknown"
+    ))
+
+
+    locations <- left_join(locations, orientation, by = "Grave ID")
+
+    locations <- select(locations, `Grave ID`, Orientation, everything())
+
+
+    head(locations)
+
+
+    ```
+
+6.  Make a table that lists total numbers of graves, number of graves with amber artifacts (*Amber objects*, *Amber beads*) and the percentage of graves with amber artifacts, differentiated by country.
+
+    ```{r}
+    # Extract unique Grave with amber
+    amber_graves <- unique(artifacts[grepl("Amber", artifacts$Artifact), "Grave ID"])
+
+    # IDs with countries
+    amber_with_country <- merge(data.frame(Frequency = amber_graves), locations, by.x = "Frequency", by.y = "Grave ID", all.x = TRUE)
+
+    # Count 
+    amber_graves_count <- aggregate(Frequency ~ Country, data = amber_with_country, FUN = function(x) length(unique(x)))
+
+    # Get country names and frequencies
+    country_freq <- as.data.frame(table(locations$Country))
+    colnames(country_freq) <- c("Country", "Frequency")
+
+    # Merge amber_graves_count with country_freq on the "Country" column
+    result_amber <- merge(amber_graves_count, country_freq, by = "Country", all.x = TRUE)
+
+    # Calculate the percentage
+    result_amber$Percentage <- (result_amber$Frequency.x / result_amber$Frequency.y) * 100
+
+    result_amber
+
+
+
+    ```
+
+6.1 Draw a brief conclusion about our hypothesis that there may have been trade between the different regions in northern Europe during the Corded Ware period:\
+**Based on the data concerning amber artifacts, there is no discernible evidence of inter-country trade. However, indications suggest that amber trade may have been prevalent in Denmark, as it is frequently discovered in approximately 20% of graves.**\
+
+7.  To check the assertion by Bourgeois and Kroon ([2017](#ref-Bourgeois2017)) that male burials were more homogeneous than female burials, make a barplot, like one of those in Figure 3 in the paper, that displays the percentage of *Flint daggers and blades* per position relative to the body in the grave (numbers 1–8). However, in your figure differentiate by left- or right-flexed body orientation.
+
+    ```{r}
+
+    # Subset "Flint blades"
+    flint_artifacts <- artifacts[grepl("Flint daggers and blades", artifacts$Artifact), ]
+
+    # Subset  "left-flexed" or "right-flexed"
+    flexed_orientations <- locations[locations$Orientation %in% c("Left Flexed", "Right Flexed"), ]
+
+    # Filter flint_artifacts 
+    flint_artifacts <- merge(flint_artifacts, flexed_orientations[c("Grave ID", "Orientation")], by = "Grave ID", all.x = TRUE)
+
+    # Calculate frequency 
+    position_counts <- table(flint_artifacts$Position)
+    position_df <- as.data.frame(position_counts)
+    colnames(position_df) <- c("Position", "Frequency")
+    position_df <- position_df[order(position_df$Position), ]
+
+    # Filter flint_artifacts
+    left_flexed_df <- flint_artifacts[flint_artifacts$Orientation == "Left Flexed", ]
+
+    right_flexed_df <- flint_artifacts[flint_artifacts$Orientation == "Right Flexed", ]
+
+    # Calculate frequency flexed orientations
+    left_flexed_counts <- table(left_flexed_df$Position)
+
+    right_flexed_counts <- table(right_flexed_df$Position)
+
+    left_flexed_df <- as.data.frame(left_flexed_counts)
+    right_flexed_df <- as.data.frame(right_flexed_counts)
+    colnames(left_flexed_df) <- c("Position", "Left_Flexed_Frequency")
+    colnames(right_flexed_df) <- c("Position", "Right_Flexed_Frequency")
+
+
+    positions_df <- merge(left_flexed_df, right_flexed_df, by = "Position", all = TRUE)
+
+    positions <- merge(positions_df, position_df, by = "Position", all = TRUE)
+
+    # Calculate the total count
+    positions$total_counts <- positions$Left_Flexed_Frequency + positions$Right_Flexed_Frequency
+
+    # Calculate the percentage
+    positions$Left_Flexed_Percentage <- (positions$Left_Flexed_Frequency / 37) * 100
+    positions$Right_Flexed_Percentage <- (positions$Right_Flexed_Frequency / 101) * 100
+
+
+    barplot_matrix <- cbind(positions$Left_Flexed_Percentage, positions$Right_Flexed_Percentage)
+
+
+    legend_names <- c("Left Flexed", "Right Flexed")
+
+    position_names <- c(paste(1:8), paste(1:8))
+
+    # Create the barplot
+    barplot(barplot_matrix, beside = TRUE, ylim = c(0, 100), 
+            names.arg = position_names, col = c(rep("blue", 8), rep("red", 8)), 
+            xlab = "Position", ylab = "Percentage",
+            main = "Percentage of Positions by Orientation")
+
+    legend("topright", legend = legend_names, fill = c("blue", "red"))
+
+
+    ```
+
+7.1 *Briefly discuss the statement by Bourgeois and Kroon ([2017](#ref-Bourgeois2017)) using your figure*.
+
+**Upon examination, it becomes apparent that graves with a right flexed orientation display a higher degree of uniformity, with position 5 exhibiting notable prevalence over all others. In contrast, while position 3 of left flexed bodies demonstrates a slight predominance, it is less pronounced. This observation underscores a significant level of uniformity, particularly when compared to the findings posited by Bourgeois and Kroon (2017), which suggest that left-oriented graves are primarily associated with females, while right-oriented graves are attributed to males, and that the male graves tend to be more homogeneous. So the observed trend indicates a propensity for greater uniformity in the arrangement of male graves.**
+
+8.  Finally calculate an objective measure of the diversity or dispersion of the position distributions of the flint daggers and blades for both body orientations. There are several objective measures of diversity, but you should calculate the Shannon entropy:𝐼=−∑𝑓𝑖ln⁡𝑓𝑖where 𝑓𝑖 are the fractions in the distributions (the 𝑓𝑖 add up to 1 for each distribution)^[3](#fn3)^. Present the results in a small table.
+
+```{r}
+# Calculate Shannon entropy
+left_ent <- -sum(positions$Left_Flexed_Percentage/100 * log(positions$Left_Flexed_Percentage/100), na.rm = TRUE)
+
+
+right_ent <- -sum(positions$Right_Flexed_Percentage/100 * log(positions$Right_Flexed_Percentage/100), na.rm = TRUE)
+
+# Table
+small_table <- data.frame(
+  Orientation = c("Left Flexed", "Right Flexed"),
+  Shannon_Entropy = c(left_ent, right_ent)
+)
+
+small_table
+
+```
